@@ -221,9 +221,15 @@ func (p *Poller[T]) TriggerPoll() {
 }
 
 // Done returns a channel that is closed when the background worker exits.
+// If the poller has not been started, it returns an already-closed channel.
 func (p *Poller[T]) Done() <-chan struct{} {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
+	if p.workerDone == nil {
+		closed := make(chan struct{})
+		close(closed)
+		return closed
+	}
 	return p.workerDone
 }
 

@@ -123,6 +123,20 @@ func TestIsStaleBoundaries(t *testing.T) {
 	}
 }
 
+func TestPollerDoneBeforeStart(t *testing.T) {
+	p, err := New(time.Hour, func(context.Context) (int, error) { return 1, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := p.Done()
+	select {
+	case <-done:
+		// Expected: already closed
+	default:
+		t.Fatal("Done() returned non-closed channel before Start()")
+	}
+}
+
 func TestPollerManualPollSerializationAndClose(t *testing.T) {
 	fetchEntered := make(chan int, 2)
 	release1 := make(chan struct{})
