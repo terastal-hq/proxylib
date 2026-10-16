@@ -36,6 +36,12 @@ func ReadFields(path string) (map[string]json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
+	return ParseFields(data)
+}
+
+// ParseFields unmarshals raw JSON data into a field map.
+// If data is empty, an empty map is returned.
+func ParseFields(data []byte) (map[string]json.RawMessage, error) {
 	fields := make(map[string]json.RawMessage)
 	if len(data) == 0 {
 		return fields, nil
@@ -49,10 +55,19 @@ func ReadFields(path string) (map[string]json.RawMessage, error) {
 // Patch reads the JSON configuration at path, invokes edit to modify fields,
 // formats the JSON, invokes validate on the candidate data, and durably replaces the file.
 func Patch(path string, edit func(fields map[string]json.RawMessage) error, validate func([]byte) error) error {
+	data, err := privatefile.ReadStrictJSON(path)
+	if err != nil {
+		return err
+	}
+	return PatchWithData(path, data, edit, validate)
+}
+
+// PatchWithData patches an already-read JSON configuration without reading the file a second time.
+func PatchWithData(path string, data []byte, edit func(fields map[string]json.RawMessage) error, validate func([]byte) error) error {
 	if edit == nil {
 		return nil
 	}
-	fields, err := ReadFields(path)
+	fields, err := ParseFields(data)
 	if err != nil {
 		return err
 	}
@@ -65,6 +80,7 @@ func Patch(path string, edit func(fields map[string]json.RawMessage) error, vali
 	if err != nil {
 		return fmt.Errorf("encode config: %w", err)
 	}
+	outData = append(outData, '\n')
 
 	if validate != nil {
 		if err := validate(outData); err != nil {
@@ -72,8 +88,6 @@ func Patch(path string, edit func(fields map[string]json.RawMessage) error, vali
 		}
 	}
 
-	// Create missing parents only after candidate validation. Existing directories
-	// retain their permissions, matching the proxies' previous save behavior.
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create config directory: %w", err)
 	}

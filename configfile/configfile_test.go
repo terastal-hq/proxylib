@@ -1,6 +1,7 @@
 package configfile
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -51,6 +52,22 @@ func TestPatchAndValidation(t *testing.T) {
 	data, err := os.ReadFile(path)
 	if err != nil || !strings.Contains(string(data), `"name": "test"`) {
 		t.Fatalf("unexpected content after initial patch: %s, %v", data, err)
+	}
+	if !bytes.HasSuffix(data, []byte("\n")) {
+		t.Fatal("saved config did not end with a newline")
+	}
+
+	// Patch with pre-read data (single read pattern)
+	err = PatchWithData(path, data, func(fields map[string]json.RawMessage) error {
+		fields["patched"] = json.RawMessage(`true`)
+		return nil
+	}, nil)
+	if err != nil {
+		t.Fatalf("PatchWithData failed: %v", err)
+	}
+	data, err = os.ReadFile(path)
+	if err != nil || !strings.Contains(string(data), `"patched": true`) {
+		t.Fatalf("content after PatchWithData invalid: %s, %v", data, err)
 	}
 
 	// Patch creates missing parent directories

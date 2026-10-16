@@ -124,14 +124,16 @@ func TestIsStaleBoundaries(t *testing.T) {
 }
 
 func TestPollerManualPollSerializationAndClose(t *testing.T) {
+	fetchEntered := make(chan int, 2)
+	release1 := make(chan struct{})
+	fetch2Canceled := make(chan struct{})
+
+	var fetchIndex atomic.Int32
 	var concurrent atomic.Int32
 	var maxConcurrent atomic.Int32
-	var inFetch atomic.Bool
-	release := make(chan struct{})
 
 	fetch := func(ctx context.Context) (testSample, error) {
-		inFetch.Store(true)
-		defer inFetch.Store(false)
+		idx := int(fetchIndex.Add(1))
 		c := concurrent.Add(1)
 		for {
 			cur := maxConcurrent.Load()
@@ -139,14 +141,24 @@ func TestPollerManualPollSerializationAndClose(t *testing.T) {
 				break
 			}
 		}
+		defer concurrent.Add(-1)
+
+		fetchEntered <- idx
+
+		if idx == 1 {
+			select {
+			case <-ctx.Done():
+				return testSample{}, ctx.Err()
+			case <-release1:
+				return testSample{Value: "fetch1", ObservedAt: time.Now().UTC()}, nil
+			}
+		}
+
+		// idx == 2: wait for cancel via Close
 		select {
 		case <-ctx.Done():
-			time.Sleep(30 * time.Millisecond)
-			concurrent.Add(-1)
+			close(fetch2Canceled)
 			return testSample{}, ctx.Err()
-		case <-release:
-			concurrent.Add(-1)
-			return testSample{Value: "done", ObservedAt: time.Now().UTC()}, nil
 		}
 	}
 
@@ -157,35 +169,60 @@ func TestPollerManualPollSerializationAndClose(t *testing.T) {
 
 	done1 := make(chan struct{})
 	done2 := make(chan struct{})
+
+	// Start first manual poll
 	go func() { p.Poll(context.Background()); close(done1) }()
-	for !inFetch.Load() {
-		time.Sleep(time.Millisecond)
+	// Wait until fetch 1 is actively executing
+	first := <-fetchEntered
+	if first != 1 {
+		t.Fatalf("expected fetch 1, got %d", first)
 	}
+
+	// Start second manual poll while first is still running
 	go func() { p.Poll(context.Background()); close(done2) }()
-	time.Sleep(20 * time.Millisecond)
+
+	// Verify that second fetch has not entered because first holds the gate
+	select {
+	case unexpected := <-fetchEntered:
+		t.Fatalf("fetch %d entered concurrently before fetch 1 was released", unexpected)
+	default:
+	}
 
 	if max := maxConcurrent.Load(); max != 1 {
 		t.Fatalf("concurrent fetches observed: %d, want 1", max)
 	}
 
-	// Close cancels active fetches and waits for them to completely finish
+	// Release first fetch; second fetch can now acquire the gate
+	close(release1)
+	<-done1
+
+	// Wait until second fetch has entered
+	second := <-fetchEntered
+	if second != 2 {
+		t.Fatalf("expected fetch 2, got %d", second)
+	}
+
+	// Close must cancel the in-flight second fetch and wait for it to return
 	closed := make(chan struct{})
 	go func() {
 		_ = p.Close()
 		close(closed)
 	}()
 
+	// Verify second fetch received cancellation from Close
 	select {
-	case <-closed:
-		if inFetch.Load() {
-			t.Fatal("Close returned while fetch handler was still executing")
-		}
-	case <-time.After(200 * time.Millisecond):
-		t.Fatal("Close did not complete within expected timeout")
+	case <-fetch2Canceled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("fetch 2 was not canceled by Close")
 	}
 
-	close(release)
-	<-done1
+	// Verify Close returned after fetch finished
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close did not return after fetch canceled")
+	}
+
 	<-done2
 }
 

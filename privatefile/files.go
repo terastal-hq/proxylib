@@ -93,13 +93,18 @@ func AtomicWrite(path string, data []byte) error {
 	if err := InspectFile(path); err != nil {
 		return err
 	}
-	if err := os.Rename(tmpName, path); err != nil {
+	if err := renameFile(tmpName, path); err != nil {
 		return err
 	}
 	if err := syncDirectory(dir); err != nil {
 		return &CommitError{Err: err}
 	}
 	return nil
+}
+
+// Replace atomically replaces target path to with from, using durable metadata boundaries.
+func Replace(from, to string) error {
+	return renameFile(from, to)
 }
 
 // SyncDir flushes the directory entries to disk on supported platforms.

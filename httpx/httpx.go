@@ -2,6 +2,7 @@
 package httpx
 
 import (
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -43,6 +44,7 @@ func ReadBounded(reader io.Reader, limit int64) ([]byte, error) {
 }
 
 // BearerMatches checks in constant time whether the Authorization header contains the expected bearer token.
+// Both expected and provided tokens are hashed with SHA-256 before comparison to prevent length timing leaks.
 func BearerMatches(r *http.Request, key string) bool {
 	if key == "" || r == nil {
 		return false
@@ -52,7 +54,9 @@ func BearerMatches(r *http.Request, key string) bool {
 	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
 		return false
 	}
-	return subtle.ConstantTimeCompare([]byte(parts[1]), []byte(key)) == 1
+	expected := sha256.Sum256([]byte(key))
+	provided := sha256.Sum256([]byte(parts[1]))
+	return subtle.ConstantTimeCompare(expected[:], provided[:]) == 1
 }
 
 // RejectUnreadBody consumes up to maxDiscardBytes from an unread request body to enable connection reuse.
