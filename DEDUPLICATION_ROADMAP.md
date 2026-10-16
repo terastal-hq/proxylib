@@ -159,16 +159,19 @@ These components are clean, provider-agnostic, and have existing 100% test cover
 
 ---
 
-## 3. Recommended Phasing Plan
+## 3. Implementation Status
 
-1. **Phase A (Tier 1 Extraction -> `proxylib v0.2.0`)**:
-   * Add `poller`, `privatefile`, `configfile`, `httpx`, and `lifecycle` packages to `proxylib`.
-   * Add 100% unit tests in `proxylib`.
-   * Cut and tag `proxylib v0.2.0`.
-   * Migrate both `codex-proxy` and `antigravity-proxy` to use the new packages.
-   * Run full test suites across all repos.
+1. **Phase A (Tier 1 Extraction -> `proxylib v0.2.8`) - COMPLETE**:
+   * Added `poller`, `privatefile`, `configfile`, `httpx`, and `lifecycle` packages to `proxylib`.
+   * Unit tests, race detection, cross-compilation verified.
+   * Migrated both `codex-proxy` and `antigravity-proxy`.
 
-2. **Phase B (Tier 2 Extraction -> `proxylib v0.3.0`)**:
-   * Add `accounts`, `clicommand`, and reusable `adminapi` account/key handler helpers to `proxylib`.
-   * Migrate CLI commands and admin endpoints in both proxies.
-   * Net reduction: ~600–900 lines of boilerplate removed from each proxy.
+2. **Phase B (Tier 2 Extraction -> `proxylib v0.3.1`) - COMPLETE**:
+   * Added `accounts` (Key model, BaseAccount, generic Validate).
+   * Added `clicommand` (CLI accounts, keys, and admin-key command runners).
+   * Added `adminapi` (Account and Key CRUD mutation helpers).
+   * Migrated CLI commands and admin endpoints in both proxies.
+   * Net reduction: >530 lines of boilerplate removed across both proxies.
+
+3. **Phase C (Tier 3 - Optional / Deferred)**:
+   * OAuth Session Management State Machine contracts.
