@@ -172,6 +172,13 @@ func (p *Poller[T]) TriggerPoll() {
 	}
 }
 
+// Done returns a channel that is closed when the background worker exits.
+func (p *Poller[T]) Done() <-chan struct{} {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.workerDone
+}
+
 // Stale reports whether the observation is older than two polling intervals or has an error.
 func (p *Poller[T]) Stale(observedAt time.Time, info PollInfo) bool {
 	return IsStale(observedAt, p.interval, info.LastError, time.Now())
