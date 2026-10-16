@@ -19,7 +19,9 @@ type PollInfo struct {
 }
 
 // Poller runs a periodic background fetcher, maintains the latest observation in memory,
-// and provides staleness calculations without disk I/O.
+// and provides staleness calculations without disk I/O. Manual and background
+// fetches never overlap. Close cancels and joins all admitted polling calls.
+// Fetch must respect context cancellation for timely shutdown.
 type Poller[T any] struct {
 	mu         sync.RWMutex
 	interval   time.Duration
@@ -30,6 +32,11 @@ type Poller[T any] struct {
 	polling    PollInfo
 
 	trigger chan struct{}
+	// fetchGate serializes fetches; lifetime cancels manual as well as worker calls.
+	fetchGate chan struct{}
+	lifetime  context.Context
+	stop      context.CancelFunc
+	calls     sync.WaitGroup // Admission is guarded by mu and closed.
 
 	started    bool
 	closed     bool
@@ -51,7 +58,11 @@ func New[T any](interval time.Duration, fetch func(context.Context) (T, error), 
 	if len(observedAt) > 0 {
 		obs = observedAt[0]
 	}
+	lifetime, stop := context.WithCancel(context.Background())
 	return &Poller[T]{
+		lifetime:   lifetime,
+		stop:       stop,
+		fetchGate:  make(chan struct{}, 1),
 		interval:   interval,
 		fetch:      fetch,
 		observedAt: obs,
@@ -100,15 +111,42 @@ func (p *Poller[T]) run(ctx context.Context) {
 	}
 }
 
-// Poll attempts one fetch and updates the in-memory state.
+// Poll attempts one fetch and updates the in-memory state. It waits for any
+// other fetch to finish, unless ctx or the poller is canceled. Nil contexts and
+// calls after Close are ignored. Like worker polls, admitted calls are joined
+// by Close; fetch must not call Close on its own poller.
 func (p *Poller[T]) Poll(ctx context.Context) {
 	p.poll(ctx)
 }
 
 func (p *Poller[T]) poll(ctx context.Context) {
-	if ctx.Err() != nil {
+	if ctx == nil || ctx.Err() != nil {
 		return
 	}
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return
+	}
+	// Register before dropping mu so Close cannot miss an admitted call.
+	p.calls.Add(1)
+	p.mu.Unlock()
+	defer p.calls.Done()
+
+	owned, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(p.lifetime, cancel)
+	defer stop()
+	defer cancel()
+	select {
+	case p.fetchGate <- struct{}{}:
+		defer func() { <-p.fetchGate }()
+	case <-owned.Done():
+		return
+	}
+	if owned.Err() != nil {
+		return
+	}
+
 	attempt := time.Now().UTC()
 	p.mu.Lock()
 	if p.closed {
@@ -119,7 +157,7 @@ func (p *Poller[T]) poll(ctx context.Context) {
 	p.polling.LastAttemptAt = &attempt
 	p.mu.Unlock()
 
-	sample, err := p.fetch(ctx)
+	sample, err := p.fetch(owned)
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -127,7 +165,7 @@ func (p *Poller[T]) poll(ctx context.Context) {
 		return
 	}
 	if err == nil {
-		err = ctx.Err()
+		err = owned.Err()
 	}
 	if err != nil {
 		p.polling.LastError = err.Error()
@@ -204,14 +242,17 @@ func (p *Poller[T]) Close() error {
 	return p.closer.Close(func() error {
 		p.mu.Lock()
 		p.closed = true
+		p.stop()
 		if p.cancel != nil {
 			p.cancel()
 		}
+		done := p.workerDone
 		p.mu.Unlock()
 
-		if p.workerDone != nil {
-			<-p.workerDone
+		if done != nil {
+			<-done
 		}
+		p.calls.Wait()
 		return nil
 	})
 }

@@ -122,3 +122,70 @@ func TestIsStaleBoundaries(t *testing.T) {
 		t.Fatal("error state was not marked stale")
 	}
 }
+
+func TestPollerManualPollSerializationAndClose(t *testing.T) {
+	var concurrent atomic.Int32
+	var maxConcurrent atomic.Int32
+	var inFetch atomic.Bool
+	release := make(chan struct{})
+
+	fetch := func(ctx context.Context) (testSample, error) {
+		inFetch.Store(true)
+		defer inFetch.Store(false)
+		c := concurrent.Add(1)
+		for {
+			cur := maxConcurrent.Load()
+			if c <= cur || maxConcurrent.CompareAndSwap(cur, c) {
+				break
+			}
+		}
+		select {
+		case <-ctx.Done():
+			time.Sleep(30 * time.Millisecond)
+			concurrent.Add(-1)
+			return testSample{}, ctx.Err()
+		case <-release:
+			concurrent.Add(-1)
+			return testSample{Value: "done", ObservedAt: time.Now().UTC()}, nil
+		}
+	}
+
+	p, err := New(time.Hour, fetch)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done1 := make(chan struct{})
+	done2 := make(chan struct{})
+	go func() { p.Poll(context.Background()); close(done1) }()
+	for !inFetch.Load() {
+		time.Sleep(time.Millisecond)
+	}
+	go func() { p.Poll(context.Background()); close(done2) }()
+	time.Sleep(20 * time.Millisecond)
+
+	if max := maxConcurrent.Load(); max != 1 {
+		t.Fatalf("concurrent fetches observed: %d, want 1", max)
+	}
+
+	// Close cancels active fetches and waits for them to completely finish
+	closed := make(chan struct{})
+	go func() {
+		_ = p.Close()
+		close(closed)
+	}()
+
+	select {
+	case <-closed:
+		if inFetch.Load() {
+			t.Fatal("Close returned while fetch handler was still executing")
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("Close did not complete within expected timeout")
+	}
+
+	close(release)
+	<-done1
+	<-done2
+}
+

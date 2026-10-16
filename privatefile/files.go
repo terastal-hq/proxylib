@@ -142,11 +142,16 @@ func ReadStrictJSON(path string) ([]byte, error) {
 	return data, nil
 }
 
-// RejectDuplicateFields ensures top-level JSON keys are case-insensitively unique.
+// RejectDuplicateFields requires exactly one complete JSON object and ensures
+// its top-level keys are case-insensitively unique.
 func RejectDuplicateFields(data []byte) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	if _, err := decoder.Token(); err != nil {
+	opening, err := decoder.Token()
+	if err != nil {
 		return err
+	}
+	if opening != json.Delim('{') {
+		return errors.New("config must contain exactly one JSON object")
 	}
 	var keys []string
 	for decoder.More() {
@@ -168,6 +173,17 @@ func RejectDuplicateFields(data []byte) error {
 		if err := decoder.Decode(&value); err != nil {
 			return err
 		}
+	}
+	closing, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	if closing != json.Delim('}') {
+		return errors.New("config must contain a complete JSON object")
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return errors.New("config must contain exactly one JSON object")
 	}
 	return nil
 }

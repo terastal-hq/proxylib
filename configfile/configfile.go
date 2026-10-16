@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/terastal-hq/proxylib/privatefile"
@@ -70,5 +72,10 @@ func Patch(path string, edit func(fields map[string]json.RawMessage) error, vali
 		}
 	}
 
+	// Create missing parents only after candidate validation. Existing directories
+	// retain their permissions, matching the proxies' previous save behavior.
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create config directory: %w", err)
+	}
 	return privatefile.AtomicWrite(path, outData)
 }

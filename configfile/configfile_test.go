@@ -53,6 +53,20 @@ func TestPatchAndValidation(t *testing.T) {
 		t.Fatalf("unexpected content after initial patch: %s, %v", data, err)
 	}
 
+	// Patch creates missing parent directories
+	nestedPath := filepath.Join(dir, "sub", "sub2", "config.json")
+	err = Patch(nestedPath, func(fields map[string]json.RawMessage) error {
+		fields["nested"] = json.RawMessage(`true`)
+		return nil
+	}, nil)
+	if err != nil {
+		t.Fatalf("Patch with missing parent failed: %v", err)
+	}
+	nestedData, err := os.ReadFile(nestedPath)
+	if err != nil || !strings.Contains(string(nestedData), `"nested": true`) {
+		t.Fatalf("nested patch content invalid: %s, %v", nestedData, err)
+	}
+
 	// Patch with validation failure
 	validationErr := errors.New("invalid port")
 	err = Patch(path, func(fields map[string]json.RawMessage) error {

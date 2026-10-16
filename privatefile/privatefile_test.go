@@ -75,6 +75,17 @@ func TestAtomicWriteAndReadStrictJSON(t *testing.T) {
 	if _, err := ReadStrictJSON(invalidPath); err == nil || !strings.Contains(err.Error(), "JSON object") {
 		t.Fatalf("expected JSON object error, got %v", err)
 	}
+
+	// Trailing garbage or second object
+	for _, bad := range []string{`{"a":1} garbage`, `{"a":1} {"b":2}`} {
+		badPath := filepath.Join(dir, "bad.json")
+		if err := AtomicWrite(badPath, []byte(bad)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ReadStrictJSON(badPath); err == nil {
+			t.Fatalf("accepted trailing payload %q", bad)
+		}
+	}
 }
 
 func TestRejectDuplicateFields(t *testing.T) {
