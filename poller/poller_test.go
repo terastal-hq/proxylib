@@ -1,0 +1,122 @@
+package poller
+
+import (
+	"context"
+	"errors"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+type testSample struct {
+	Value      string
+	ObservedAt time.Time
+}
+
+func TestPollerLifecycleAndStaleness(t *testing.T) {
+	var count atomic.Int32
+	var fail atomic.Bool
+
+	fetch := func(ctx context.Context) (testSample, error) {
+		if fail.Load() {
+			return testSample{}, errors.New("upstream failed")
+		}
+		_ = count.Add(1)
+		return testSample{
+			Value:      "sample",
+			ObservedAt: time.Now().UTC(),
+		}, nil
+	}
+
+	p, err := New(50*time.Millisecond, fetch)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	// Before start
+	_, exists, info := p.Latest()
+	if exists || info.LastAttemptAt != nil {
+		t.Fatalf("unexpected state before start: exists=%v, info=%+v", exists, info)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := p.Start(ctx); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	// Repeated start fails
+	if err := p.Start(ctx); err == nil {
+		t.Fatal("expected error on duplicate Start")
+	}
+
+	// Wait for first poll to complete
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		sample, exists, info := p.Latest()
+		if exists && sample.Value == "sample" && info.LastError == "" {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	sample, exists, info := p.Latest()
+	if !exists || sample.Value != "sample" {
+		t.Fatalf("expected sample, got exists=%v sample=%+v", exists, sample)
+	}
+
+	// Fresh sample is not stale
+	if p.Stale(sample.ObservedAt, info) {
+		t.Fatal("fresh observation marked stale")
+	}
+
+	// Simulate error on next poll
+	fail.Store(true)
+	p.TriggerPoll()
+
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		_, _, info := p.Latest()
+		if info.LastError != "" {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	_, _, errInfo := p.Latest()
+	if errInfo.LastError != "upstream failed" {
+		t.Fatalf("expected error info, got %+v", errInfo)
+	}
+	if !p.Stale(sample.ObservedAt, errInfo) {
+		t.Fatal("errored poller was not marked stale")
+	}
+
+	// Close
+	if err := p.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+	if err := p.Close(); err != nil {
+		t.Fatalf("idempotent Close failed: %v", err)
+	}
+}
+
+func TestIsStaleBoundaries(t *testing.T) {
+	now := time.Now()
+	interval := time.Minute
+
+	// Within 2 intervals
+	if IsStale(now.Add(-90*time.Second), interval, "", now) {
+		t.Fatal("observation within 2 intervals marked stale")
+	}
+
+	// Past 2 intervals
+	if !IsStale(now.Add(-130*time.Second), interval, "", now) {
+		t.Fatal("observation past 2 intervals was not marked stale")
+	}
+
+	// Error makes it stale immediately
+	if !IsStale(now, interval, "some error", now) {
+		t.Fatal("error state was not marked stale")
+	}
+}
