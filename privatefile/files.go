@@ -75,9 +75,8 @@ func AtomicWrite(path string, data []byte) error {
 	if err := file.Chmod(0o600); err != nil {
 		return err
 	}
-	record := append(append([]byte(nil), data...), '\n')
-	n, err := file.Write(record)
-	if err == nil && n != len(record) {
+	n, err := file.Write(data)
+	if err == nil && n != len(data) {
 		err = io.ErrShortWrite
 	}
 	if err != nil {
