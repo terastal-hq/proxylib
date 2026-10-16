@@ -15,19 +15,26 @@ import (
 func printLine(w io.Writer, a ...any)                  { _, _ = fmt.Fprintln(w, a...) }
 func printFormat(w io.Writer, format string, a ...any) { _, _ = fmt.Fprintf(w, format, a...) }
 
-// Config defines the environment and callbacks needed by generic CLI commands.
-type Config[A accounts.MutableAccount] struct {
+// Config defines the environment, accessors, and callbacks needed by generic CLI commands.
+type Config[A any] struct {
 	AppName        string
 	Output         io.Writer
 	GetAccounts    func() ([]A, error)
 	UpdateAccounts func(func(*[]A) error) error
+	GetID          func(A) string
+	GetEmail       func(A) string
+	IsEnabled      func(A) bool
+	SetEnabled     func(*A, bool)
+	GetKeys        func(A) []accounts.Key
+	AddKey         func(*A, accounts.Key)
+	RemoveKey      func(*A, string) bool
 	KeyPrefix      string
 	GenerateKey    func() (string, error)
 	GenerateKeyID  func() (string, error)
 }
 
 // RunAccounts executes the `accounts <list|enable|disable|remove> [ID]` subcommand.
-func RunAccounts[A accounts.MutableAccount](args []string, cfg Config[A]) error {
+func RunAccounts[A any](args []string, cfg Config[A]) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: %s accounts <list|enable|disable|remove> [ID]", cfg.AppName)
 	}
@@ -45,14 +52,14 @@ func RunAccounts[A accounts.MutableAccount](args []string, cfg Config[A]) error 
 		printLine(cfg.Output, "CONFIGURED ACCOUNTS:")
 		for _, acc := range accs {
 			statusStr := "enabled"
-			if !acc.IsEnabled() {
+			if !cfg.IsEnabled(acc) {
 				statusStr = "disabled"
 			}
-			email := acc.GetEmail()
+			email := cfg.GetEmail(acc)
 			if email == "" {
 				email = "(not identified)"
 			}
-			printFormat(cfg.Output, "  • %-16s [%s] email: %-24s keys: %d\n", acc.GetID(), statusStr, email, len(acc.GetKeys()))
+			printFormat(cfg.Output, "  • %-16s [%s] email: %-24s keys: %d\n", cfg.GetID(acc), statusStr, email, len(cfg.GetKeys(acc)))
 		}
 		return nil
 
@@ -66,9 +73,9 @@ func RunAccounts[A accounts.MutableAccount](args []string, cfg Config[A]) error 
 		found := false
 		err := cfg.UpdateAccounts(func(accList *[]A) error {
 			for i := range *accList {
-				if (*accList)[i].GetID() == targetID {
+				if cfg.GetID((*accList)[i]) == targetID {
 					found = true
-					(*accList)[i].SetEnabled(enableVal)
+					cfg.SetEnabled(&(*accList)[i], enableVal)
 					return nil
 				}
 			}
@@ -93,7 +100,7 @@ func RunAccounts[A accounts.MutableAccount](args []string, cfg Config[A]) error 
 		err := cfg.UpdateAccounts(func(accList *[]A) error {
 			filtered := make([]A, 0, len(*accList))
 			for _, acc := range *accList {
-				if acc.GetID() == targetID {
+				if cfg.GetID(acc) == targetID {
 					found = true
 					continue
 				}
@@ -121,7 +128,7 @@ func RunAccounts[A accounts.MutableAccount](args []string, cfg Config[A]) error 
 }
 
 // RunKeys executes the `keys <list|create|revoke> <ACCOUNT_ID> [KEY_ID] [--label LABEL]` subcommand.
-func RunKeys[A accounts.MutableAccount](args []string, cfg Config[A]) error {
+func RunKeys[A any](args []string, cfg Config[A]) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: %s keys <list|create|revoke> <ACCOUNT_ID> [KEY_ID] [--label LABEL]", cfg.AppName)
 	}
@@ -139,7 +146,7 @@ func RunKeys[A accounts.MutableAccount](args []string, cfg Config[A]) error {
 		var target A
 		var found bool
 		for _, a := range accs {
-			if a.GetID() == accountID {
+			if cfg.GetID(a) == accountID {
 				target = a
 				found = true
 				break
@@ -148,7 +155,7 @@ func RunKeys[A accounts.MutableAccount](args []string, cfg Config[A]) error {
 		if !found {
 			return fmt.Errorf("account %q not found", accountID)
 		}
-		keys := target.GetKeys()
+		keys := cfg.GetKeys(target)
 		if len(keys) == 0 {
 			printFormat(cfg.Output, "No API keys configured for account %q.\n", accountID)
 			return nil
@@ -207,9 +214,9 @@ func RunKeys[A accounts.MutableAccount](args []string, cfg Config[A]) error {
 		found := false
 		err = cfg.UpdateAccounts(func(accList *[]A) error {
 			for i := range *accList {
-				if (*accList)[i].GetID() == accountID {
+				if cfg.GetID((*accList)[i]) == accountID {
 					found = true
-					(*accList)[i].AddKey(keyObj)
+					cfg.AddKey(&(*accList)[i], keyObj)
 					return nil
 				}
 			}
@@ -243,9 +250,9 @@ func RunKeys[A accounts.MutableAccount](args []string, cfg Config[A]) error {
 		foundKey := false
 		err := cfg.UpdateAccounts(func(accList *[]A) error {
 			for i := range *accList {
-				if (*accList)[i].GetID() == accountID {
+				if cfg.GetID((*accList)[i]) == accountID {
 					foundAccount = true
-					if (*accList)[i].RemoveKey(keyID) {
+					if cfg.RemoveKey(&(*accList)[i], keyID) {
 						foundKey = true
 						return nil
 					}

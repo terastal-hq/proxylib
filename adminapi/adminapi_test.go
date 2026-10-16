@@ -12,7 +12,7 @@ type testAccount struct {
 }
 
 func TestAdminAPIMutations(t *testing.T) {
-	accs := []*testAccount{
+	accs := []testAccount{
 		{
 			BaseAccount: accounts.BaseAccount{
 				ID:      "acc-1",

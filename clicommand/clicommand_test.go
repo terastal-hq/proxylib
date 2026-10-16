@@ -12,25 +12,30 @@ type testAccount struct {
 	accounts.BaseAccount
 }
 
-func newTestConfig(initial []testAccount) (*bytes.Buffer, Config[*testAccount]) {
+func newTestConfig(initial []testAccount) (*bytes.Buffer, Config[testAccount]) {
 	buf := new(bytes.Buffer)
-	accs := make([]*testAccount, len(initial))
-	for i := range initial {
-		cp := initial[i]
-		accs[i] = &cp
-	}
-	cfg := Config[*testAccount]{
+	accs := make([]testAccount, len(initial))
+	copy(accs, initial)
+
+	cfg := Config[testAccount]{
 		AppName: "test-proxy",
 		Output:  buf,
-		GetAccounts: func() ([]*testAccount, error) {
-			res := make([]*testAccount, len(accs))
+		GetAccounts: func() ([]testAccount, error) {
+			res := make([]testAccount, len(accs))
 			copy(res, accs)
 			return res, nil
 		},
-		UpdateAccounts: func(edit func(*[]*testAccount) error) error {
+		UpdateAccounts: func(edit func(*[]testAccount) error) error {
 			return edit(&accs)
 		},
-		KeyPrefix: "test_",
+		GetID:      func(a testAccount) string { return a.ID },
+		GetEmail:   func(a testAccount) string { return a.AccountEmail },
+		IsEnabled:  func(a testAccount) bool { return a.Enabled },
+		SetEnabled: func(a *testAccount, e bool) { a.Enabled = e },
+		GetKeys:    func(a testAccount) []accounts.Key { return a.Keys },
+		AddKey:     func(a *testAccount, k accounts.Key) { a.Keys = append(a.Keys, k) },
+		RemoveKey:  func(a *testAccount, id string) bool { return a.RemoveKey(id) },
+		KeyPrefix:  "test_",
 		GenerateKey: func() (string, error) {
 			return "test_secret123", nil
 		},

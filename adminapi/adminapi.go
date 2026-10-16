@@ -13,6 +13,16 @@ type PatchAccountPayload struct {
 	Enabled *bool   `json:"enabled"`
 }
 
+// MutableAccountPtr is satisfied by any pointer *A whose value type A represents an account.
+type MutableAccountPtr[A any] interface {
+	*A
+	accounts.Account
+	SetLabel(string)
+	SetEnabled(bool)
+	AddKey(accounts.Key)
+	RemoveKey(keyID string) bool
+}
+
 // FindAccount searches for an account by its ID.
 func FindAccount[A accounts.Account](accList []A, id string) (A, bool) {
 	for _, acc := range accList {
@@ -25,14 +35,15 @@ func FindAccount[A accounts.Account](accList []A, id string) (A, bool) {
 }
 
 // ApplyPatchAccount updates an account's Label and Enabled state if found.
-func ApplyPatchAccount[A accounts.MutableAccount](accList *[]A, id string, payload PatchAccountPayload) (updated A, found bool) {
+func ApplyPatchAccount[A any, P MutableAccountPtr[A]](accList *[]A, id string, payload PatchAccountPayload) (updated A, found bool) {
 	for i := range *accList {
-		if (*accList)[i].GetID() == id {
+		ptr := P(&(*accList)[i])
+		if ptr.GetID() == id {
 			if payload.Label != nil {
-				(*accList)[i].SetLabel(strings.TrimSpace(*payload.Label))
+				ptr.SetLabel(strings.TrimSpace(*payload.Label))
 			}
 			if payload.Enabled != nil {
-				(*accList)[i].SetEnabled(*payload.Enabled)
+				ptr.SetEnabled(*payload.Enabled)
 			}
 			return (*accList)[i], true
 		}
@@ -41,7 +52,7 @@ func ApplyPatchAccount[A accounts.MutableAccount](accList *[]A, id string, paylo
 }
 
 // ApplyDeleteAccount removes an account by its ID. Returns true if the account was found and removed.
-func ApplyDeleteAccount[A accounts.MutableAccount](accList *[]A, id string) bool {
+func ApplyDeleteAccount[A accounts.Account](accList *[]A, id string) bool {
 	filtered := make([]A, 0, len(*accList))
 	found := false
 	for _, acc := range *accList {
@@ -58,10 +69,11 @@ func ApplyDeleteAccount[A accounts.MutableAccount](accList *[]A, id string) bool
 }
 
 // ApplyCreateKey appends a key to the target account. Returns true if the account was found.
-func ApplyCreateKey[A accounts.MutableAccount](accList *[]A, id string, key accounts.Key) bool {
+func ApplyCreateKey[A any, P MutableAccountPtr[A]](accList *[]A, id string, key accounts.Key) bool {
 	for i := range *accList {
-		if (*accList)[i].GetID() == id {
-			(*accList)[i].AddKey(key)
+		ptr := P(&(*accList)[i])
+		if ptr.GetID() == id {
+			ptr.AddKey(key)
 			return true
 		}
 	}
@@ -69,11 +81,12 @@ func ApplyCreateKey[A accounts.MutableAccount](accList *[]A, id string, key acco
 }
 
 // ApplyDeleteKey removes a key from the target account.
-func ApplyDeleteKey[A accounts.MutableAccount](accList *[]A, id, keyID string) (foundAccount, foundKey bool) {
+func ApplyDeleteKey[A any, P MutableAccountPtr[A]](accList *[]A, id, keyID string) (foundAccount, foundKey bool) {
 	for i := range *accList {
-		if (*accList)[i].GetID() == id {
+		ptr := P(&(*accList)[i])
+		if ptr.GetID() == id {
 			foundAccount = true
-			if (*accList)[i].RemoveKey(keyID) {
+			if ptr.RemoveKey(keyID) {
 				foundKey = true
 				return true, true
 			}
