@@ -17,7 +17,9 @@ import (
 // Callers must reflect the replacement in memory, not pretend the old file survived.
 type CommitError struct{ Err error }
 
-func (e *CommitError) Error() string { return "file replaced but durability is uncertain" }
+func (e *CommitError) Error() string {
+	return "configuration was replaced, but its durability could not be confirmed; retry saving to confirm durability"
+}
 func (e *CommitError) Unwrap() error { return e.Err }
 
 // InspectFile checks that the path is a regular file and not a symbolic link.
