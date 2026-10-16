@@ -127,6 +127,7 @@ func TestPollerManualPollSerializationAndClose(t *testing.T) {
 	fetchEntered := make(chan int, 2)
 	release1 := make(chan struct{})
 	fetch2Canceled := make(chan struct{})
+	var fetch2Finished atomic.Bool
 
 	var fetchIndex atomic.Int32
 	var concurrent atomic.Int32
@@ -158,6 +159,8 @@ func TestPollerManualPollSerializationAndClose(t *testing.T) {
 		select {
 		case <-ctx.Done():
 			close(fetch2Canceled)
+			time.Sleep(50 * time.Millisecond)
+			fetch2Finished.Store(true)
 			return testSample{}, ctx.Err()
 		}
 	}
@@ -172,7 +175,6 @@ func TestPollerManualPollSerializationAndClose(t *testing.T) {
 
 	// Start first manual poll
 	go func() { p.Poll(context.Background()); close(done1) }()
-	// Wait until fetch 1 is actively executing
 	first := <-fetchEntered
 	if first != 1 {
 		t.Fatalf("expected fetch 1, got %d", first)
@@ -181,11 +183,12 @@ func TestPollerManualPollSerializationAndClose(t *testing.T) {
 	// Start second manual poll while first is still running
 	go func() { p.Poll(context.Background()); close(done2) }()
 
-	// Verify that second fetch has not entered because first holds the gate
+	// Verify that second fetch does not enter because first holds the gate
 	select {
 	case unexpected := <-fetchEntered:
 		t.Fatalf("fetch %d entered concurrently before fetch 1 was released", unexpected)
-	default:
+	case <-time.After(50 * time.Millisecond):
+		// Expected: fetch 2 is blocked on fetchGate
 	}
 
 	if max := maxConcurrent.Load(); max != 1 {
@@ -209,20 +212,20 @@ func TestPollerManualPollSerializationAndClose(t *testing.T) {
 		close(closed)
 	}()
 
-	// Verify second fetch received cancellation from Close
 	select {
 	case <-fetch2Canceled:
 	case <-time.After(2 * time.Second):
 		t.Fatal("fetch 2 was not canceled by Close")
 	}
 
-	// Verify Close returned after fetch finished
 	select {
 	case <-closed:
+		if !fetch2Finished.Load() {
+			t.Fatal("Close returned before fetch 2 finished its execution")
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Close did not return after fetch canceled")
 	}
 
 	<-done2
 }
-

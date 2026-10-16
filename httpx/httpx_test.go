@@ -65,6 +65,12 @@ func TestBearerMatches(t *testing.T) {
 	if BearerMatches(req, "wrong-token") {
 		t.Fatal("unexpected match for wrong token")
 	}
+	// Prefix and varying length strings must be rejected
+	for _, candidate := range []string{"secret", "secret-token-extra", "s", "secret-toke"} {
+		if BearerMatches(req, candidate) {
+			t.Fatalf("unexpected match for %q", candidate)
+		}
+	}
 	if BearerMatches(req, "") {
 		t.Fatal("unexpected match for empty token")
 	}
