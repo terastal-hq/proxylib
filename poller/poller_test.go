@@ -28,7 +28,9 @@ func TestPollerLifecycleAndStaleness(t *testing.T) {
 		}, nil
 	}
 
-	p, err := New(50*time.Millisecond, fetch)
+	p, err := New(50*time.Millisecond, fetch, func(s testSample) time.Time {
+		return s.ObservedAt
+	})
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}

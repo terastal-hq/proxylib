@@ -21,12 +21,13 @@ type PollInfo struct {
 // Poller runs a periodic background fetcher, maintains the latest observation in memory,
 // and provides staleness calculations without disk I/O.
 type Poller[T any] struct {
-	mu        sync.RWMutex
-	interval  time.Duration
-	fetch     func(context.Context) (T, error)
-	latest    T
-	hasLatest bool
-	polling   PollInfo
+	mu         sync.RWMutex
+	interval   time.Duration
+	fetch      func(context.Context) (T, error)
+	observedAt func(T) time.Time
+	latest     T
+	hasLatest  bool
+	polling    PollInfo
 
 	trigger chan struct{}
 
@@ -38,18 +39,24 @@ type Poller[T any] struct {
 }
 
 // New constructs a Poller for the given interval and fetch function.
-func New[T any](interval time.Duration, fetch func(context.Context) (T, error)) (*Poller[T], error) {
+// An optional observedAt extractor can be provided to set LastSuccessAt from the sample.
+func New[T any](interval time.Duration, fetch func(context.Context) (T, error), observedAt ...func(T) time.Time) (*Poller[T], error) {
 	if interval <= 0 {
 		return nil, errors.New("poll interval must be positive")
 	}
 	if fetch == nil {
 		return nil, errors.New("fetch function is nil")
 	}
+	var obs func(T) time.Time
+	if len(observedAt) > 0 {
+		obs = observedAt[0]
+	}
 	return &Poller[T]{
-		interval: interval,
-		fetch:    fetch,
-		trigger:  make(chan struct{}, 1),
-		polling:  PollInfo{IntervalSeconds: int64(interval / time.Second)},
+		interval:   interval,
+		fetch:      fetch,
+		observedAt: obs,
+		trigger:    make(chan struct{}, 1),
+		polling:    PollInfo{IntervalSeconds: int64(interval / time.Second)},
 	}, nil
 }
 
@@ -128,8 +135,11 @@ func (p *Poller[T]) poll(ctx context.Context) {
 	}
 	p.latest = sample
 	p.hasLatest = true
-	now := time.Now().UTC()
-	p.polling.LastSuccessAt = &now
+	at := time.Now().UTC()
+	if p.observedAt != nil {
+		at = p.observedAt(sample)
+	}
+	p.polling.LastSuccessAt = &at
 	p.polling.LastError = ""
 }
 
